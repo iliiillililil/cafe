@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gestión de Tickets de Exportación de Café</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    body { background: #e8f5e9; font-family: 'Segoe UI', sans-serif; }
+    .container { margin-top: 40px; }
+    .form-section { background: #ffffff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+    .btn-primary { background-color: #6d4c41; border-color: #6d4c41; }
+    .btn-primary:hover { background-color: #5d4037; }
+    .ticket-card { background-color: #f1f8e9; border-left: 5px solid #6d4c41; margin-bottom: 10px; padding: 10px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2 class="text-center animate__animated animate__fadeInDown">🌿 Exportación de Café - Gestión de Tickets</h2>
+
+    <!-- Login / Registro -->
+    <div id="authSection" class="form-section">
+      <h4>Acceso al sistema</h4>
+      <input id="email" class="form-control mb-2" type="email" placeholder="Correo electrónico">
+      <input id="password" class="form-control mb-2" type="password" placeholder="Contraseña">
+      <button class="btn btn-primary w-100 mb-2" onclick="loginUser()">Iniciar sesión</button>
+      <button class="btn btn-secondary w-100 mb-2" onclick="registerUser()">Registrar nuevo usuario</button>
+      <button class="btn btn-outline-dark w-100" onclick="resetPassword()">Recuperar contraseña</button>
+    </div>
+
+    <!-- Formulario Ticket -->
+    <div id="ticketFormSection" class="form-section d-none">
+      <h4>Nuevo Ticket</h4>
+      <input id="titulo" class="form-control mb-2" placeholder="Título del pedido">
+      <textarea id="descripcion" class="form-control mb-2" placeholder="Descripción del pedido"></textarea>
+      <input id="cliente" class="form-control mb-2" placeholder="Nombre del cliente">
+      <input id="kg" class="form-control mb-2" placeholder="Kilogramos">
+      <input id="producto" class="form-control mb-2" placeholder="Tipo de producto">
+      <input id="pais" class="form-control mb-2" placeholder="País de destino">
+      <select id="estado" class="form-control mb-2">
+        <option value="abierto">Abierto</option>
+        <option value="cerrado">Cerrado</option>
+      </select>
+      <select id="prioridad" class="form-control mb-2">
+        <option value="alta">Alta</option>
+        <option value="media">Media</option>
+        <option value="baja">Baja</option>
+      </select>
+      <button class="btn btn-primary w-100" onclick="crearTicket()">Crear Ticket</button>
+    </div>
+
+    <!-- Tickets y Estadísticas -->
+    <div id="ticketsSection" class="form-section d-none">
+      <h4>Tickets Registrados</h4>
+      <div class="mb-2">
+        <button class="btn btn-success" onclick="exportarExcel()"><i class="fas fa-file-excel"></i> Exportar Excel</button>
+      </div>
+      <div id="listaTickets"></div>
+    </div>
+
+    <div id="graficoSection" class="form-section d-none">
+      <h4>Estadísticas por Prioridad</h4>
+      <canvas id="graficoPrioridad"></canvas>
+    </div>
+  </div>
+
+  <!-- Firebase -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, collection, addDoc, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyAzrVvsMql_kyOWhpI0g_0rcvcbPcsntLs",
+      authDomain: "tickets-exportacion.firebaseapp.com",
+      projectId: "tickets-exportacion",
+      storageBucket: "tickets-exportacion.firebasestorage.app",
+      messagingSenderId: "818852463698",
+      appId: "1:818852463698:web:d015ea5ad5a560bd004b8b"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    window.loginUser = async function () {
+      try {
+        const email = document.getElementById('email').value;
+        const password = document.getElementById('password').value;
+        await signInWithEmailAndPassword(auth, email, password);
+        toggleSections();
+        cargarTickets();
+      } catch (e) { alert(e.message); }
+    }
+
+    window.registerUser = async function () {
+      try {
+        const email = document.getElementById('email').value;
+        const password = document.getElementById('password').value;
+        await createUserWithEmailAndPassword(auth, email, password);
+        alert("Usuario registrado correctamente");
+      } catch (e) { alert(e.message); }
+    }
+
+    window.resetPassword = async function () {
+      const email = document.getElementById('email').value;
+      try {
+        await sendPasswordResetEmail(auth, email);
+        alert("Correo de recuperación enviado");
+      } catch (e) { alert(e.message); }
+    }
+
+    let folio = Date.now();
+    window.crearTicket = async function () {
+      const docRef = await addDoc(collection(db, "tickets"), {
+        folio: folio++,
+        titulo: document.getElementById('titulo').value,
+        descripcion: document.getElementById('descripcion').value,
+        cliente: document.getElementById('cliente').value,
+        kg: document.getElementById('kg').value,
+        producto: document.getElementById('producto').value,
+        pais: document.getElementById('pais').value,
+        estado: document.getElementById('estado').value,
+        prioridad: document.getElementById('prioridad').value,
+        fecha: serverTimestamp()
+      });
+      alert("Ticket creado correctamente");
+      cargarTickets();
+    }
+
+    window.cargarTickets = async function () {
+      const querySnapshot = await getDocs(collection(db, "tickets"));
+      const contenedor = document.getElementById("listaTickets");
+      contenedor.innerHTML = "";
+      const conteo = { alta: 0, media: 0, baja: 0 };
+
+      querySnapshot.forEach(doc => {
+        const t = doc.data();
+        conteo[t.prioridad]++;
+        contenedor.innerHTML += `
+          <div class='ticket-card'>
+            <h5>${t.titulo} (#${t.folio})</h5>
+            <p>${t.descripcion}</p>
+            <p><strong>Cliente:</strong> ${t.cliente}, ${t.kg}kg, ${t.producto}, ${t.pais}</p>
+            <p><strong>Prioridad:</strong> ${t.prioridad.toUpperCase()} - <strong>Estado:</strong> ${t.estado}</p>
+            <button class='btn btn-outline-danger btn-sm' onclick='exportarPDF(${JSON.stringify(t)})'><i class="fas fa-file-pdf"></i> Exportar PDF</button>
+          </div>`;
+      });
+
+      const ctx = document.getElementById('graficoPrioridad');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: ['Alta', 'Media', 'Baja'],
+          datasets: [{ label: 'Cantidad de Tickets', data: [conteo.alta, conteo.media, conteo.baja], backgroundColor: ['#c62828', '#fbc02d', '#388e3c'] }]
+        },
+        options: { responsive: true, plugins: { legend: { display: false } } }
+      });
+    }
+
+    window.exportarExcel = function () {
+      const wb = XLSX.utils.book_new();
+      const data = Array.from(document.querySelectorAll(".ticket-card")).map(card => {
+        return {
+          Titulo: card.querySelector("h5").innerText,
+          Descripción: card.querySelector("p:nth-child(2)").innerText,
+          Cliente: card.querySelector("p:nth-child(3)").innerText,
+          Estado: card.querySelector("p:nth-child(4)").innerText
+        }
+      });
+      const ws = XLSX.utils.json_to_sheet(data);
+      XLSX.utils.book_append_sheet(wb, ws, "Tickets");
+      XLSX.writeFile(wb, "tickets_exportacion.xlsx");
+    }
+
+    window.exportarPDF = function (ticket) {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+      doc.text(`Ticket #${ticket.folio}`, 10, 10);
+      doc.text(`Título: ${ticket.titulo}`, 10, 20);
+      doc.text(`Cliente: ${ticket.cliente}`, 10, 30);
+      doc.text(`Producto: ${ticket.producto}, ${ticket.kg}kg`, 10, 40);
+      doc.text(`Destino: ${ticket.pais}`, 10, 50);
+      doc.text(`Prioridad: ${ticket.prioridad}`, 10, 60);
+      doc.text(`Estado: ${ticket.estado}`, 10, 70);
+      doc.save(`ticket_${ticket.folio}.pdf`);
+    }
+
+    function toggleSections() {
+      document.getElementById('authSection').classList.add('d-none');
+      document.getElementById('ticketFormSection').classList.remove('d-none');
+      document.getElementById('ticketsSection').classList.remove('d-none');
+      document.getElementById('graficoSection').classList.remove('d-none');
+    }
+  </script>
+</body>
+</html>
